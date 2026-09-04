@@ -1,0 +1,78 @@
+{
+  "name": "@pify/task",
+  "version": "0.1.0",
+  "description": "Track tasks inside pi sessions: dependency graph with cycle detection, evidence-gated completion, live widget, Claude Code-style reminders",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "pify",
+    "task",
+    "todo"
+  ],
+  "homepage": "https://github.com/pifydev/task#readme",
+  "bugs": {
+    "url": "https://github.com/pifydev/task/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pifydev/task.git"
+  },
+  "license": "MIT",
+  "author": "Pify maintainers",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "extensions",
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/task.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.84.4",
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
+    "@types/node": "^22.10.2",
+    "typebox": "^1.1.38",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
