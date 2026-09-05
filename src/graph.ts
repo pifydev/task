@@ -29,6 +29,16 @@ export function readyTasks(state: TaskState): Task[] {
   return state.tasks.filter((t) => t.status === "pending" && openBlockers(t, index).length === 0);
 }
 
+/**
+ * Tasks that became ready between two states — the work a completion just
+ * unblocked. Reported at the moment the agent can act on it, so finding the
+ * newly parallelizable work doesn't need a second task_list call.
+ */
+export function newlyReady(before: TaskState, after: TaskState): Task[] {
+  const was = new Set(readyTasks(before).map((t) => t.id));
+  return readyTasks(after).filter((t) => !was.has(t.id));
+}
+
 /** Would adding `blockerId` as a blocker of `taskId` create a cycle? */
 export function wouldCycle(state: TaskState, taskId: number, blockerId: number): boolean {
   if (taskId === blockerId) return true;
@@ -178,7 +188,40 @@ export function replayBranch(entries: BranchEntryLike[]): TaskState {
     if (entry.type !== "custom" || entry.customType !== TASK_STATE) continue;
     const data = entry.data;
     if (!isRecord(data) || !Array.isArray(data.tasks) || typeof data.nextId !== "number") continue;
-    state = data as unknown as TaskState;
+    state = sanitizeState(data);
   }
   return state;
+}
+
+const STATUSES = new Set(["pending", "in_progress", "completed", "cancelled"]);
+
+function numbers(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((n): n is number => typeof n === "number") : [];
+}
+
+/**
+ * Rebuild a task state from an untrusted snapshot. A session file written by
+ * an older schema — or truncated mid-write — used to reach openBlockers with
+ * a missing blockedBy array and take the whole extension down at replay.
+ */
+export function sanitizeState(data: Record<string, unknown>): TaskState {
+  const raw = Array.isArray(data.tasks) ? data.tasks : [];
+  const tasks: Task[] = [];
+  for (const item of raw) {
+    if (!isRecord(item) || typeof item.id !== "number" || typeof item.subject !== "string") continue;
+    tasks.push({
+      id: item.id,
+      subject: item.subject,
+      description: typeof item.description === "string" ? item.description : "",
+      status: STATUSES.has(item.status as string) ? (item.status as Task["status"]) : "pending",
+      blockedBy: numbers(item.blockedBy),
+      blocks: numbers(item.blocks),
+      evidence: typeof item.evidence === "string" ? item.evidence : null,
+      createdAt: typeof item.createdAt === "number" ? item.createdAt : 0,
+      updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : 0,
+    });
+  }
+  const maxId = tasks.reduce((m, t) => Math.max(m, t.id), 0);
+  const nextId = typeof data.nextId === "number" ? Math.max(data.nextId, maxId + 1) : maxId + 1;
+  return { tasks: rebuildReverseLinks(tasks), nextId };
 }

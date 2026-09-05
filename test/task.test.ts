@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import {
   TASK_STATE,
   createTask,
+  newlyReady,
+  openBlockers,
   readyTasks,
   replayBranch,
   updateTask,
   wouldCycle,
 } from "../src/graph.ts";
-import { buildNudge, shouldNudge } from "../src/nudge.ts";
+import { buildNudge, classifyTurn, shouldNudge } from "../src/nudge.ts";
 import { buildWidgetLines } from "../src/widget.ts";
 import { EMPTY_STATE, type TaskState, type ThemeLike } from "../src/types.ts";
 
@@ -130,4 +132,73 @@ test("widget renders statuses, blocked markers, and count", () => {
   assert.ok(text.includes("⊘ #2 implement api (blocked by #1)"));
   assert.ok(text.includes("◻ #3 write docs"));
   assert.deepEqual(buildWidgetLines(EMPTY_STATE, theme), []);
+});
+
+test("v0.2 classifyTurn reads pi's toolCall name field", () => {
+  const turn = (blocks: unknown[]) => [{ role: "assistant", content: blocks }];
+  assert.deepEqual(classifyTurn(turn([{ type: "toolCall", name: "task_update" }])), {
+    usedTaskTool: true,
+    anyToolCall: true,
+  });
+  // the legacy shape still classifies
+  assert.deepEqual(classifyTurn(turn([{ type: "toolCall", toolName: "task_list" }])), {
+    usedTaskTool: true,
+    anyToolCall: true,
+  });
+  assert.deepEqual(classifyTurn(turn([{ type: "toolCall", name: "bash" }])), {
+    usedTaskTool: false,
+    anyToolCall: true,
+  });
+  assert.deepEqual(classifyTurn(turn([{ type: "text", text: "hi" }])), {
+    usedTaskTool: false,
+    anyToolCall: false,
+  });
+  // user messages and junk never count
+  assert.deepEqual(classifyTurn([{ role: "user", content: [{ type: "toolCall", name: "task_create" }] }, null]), {
+    usedTaskTool: false,
+    anyToolCall: false,
+  });
+  assert.deepEqual(classifyTurn([]), { usedTaskTool: false, anyToolCall: false });
+});
+
+test("v0.2 newlyReady reports what a completion unblocked", () => {
+  let state = createTask(EMPTY_STATE, "build", "", [], 1).state;
+  state = createTask(state, "test", "", [1], 2).state;
+  state = createTask(state, "ship", "", [2], 3).state;
+  assert.deepEqual(readyTasks(state).map((t) => t.id), [1]);
+
+  const started = updateTask(state, 1, { status: "in_progress" }, 4);
+  assert.deepEqual(newlyReady(state, started.state), []);
+  const done = updateTask(started.state, 1, { status: "completed", evidence: "bun test 12/12" }, 5);
+  assert.deepEqual(newlyReady(started.state, done.state).map((t) => t.id), [2]);
+  // #3 is still blocked by #2
+  assert.deepEqual(readyTasks(done.state).map((t) => t.id), [2]);
+});
+
+test("v0.2 replayBranch survives a malformed snapshot", () => {
+  const state = replayBranch([
+    {
+      type: "custom",
+      customType: TASK_STATE,
+      data: {
+        nextId: 2,
+        tasks: [
+          // older schema: no blockedBy/blocks/evidence, unknown status
+          { id: 1, subject: "legacy", status: "wat" },
+          { id: 7, subject: "kept", status: "completed", blockedBy: [1], blocks: "junk" },
+          { subject: "no id" },
+          "garbage",
+        ],
+      },
+    },
+  ]);
+  assert.equal(state.tasks.length, 2);
+  assert.equal(state.tasks[0]!.status, "pending");
+  assert.deepEqual(state.tasks[0]!.blockedBy, []);
+  assert.deepEqual(state.tasks[0]!.blocks, [7]);
+  assert.deepEqual(state.tasks[1]!.blocks, []);
+  // nextId never collides with a restored id
+  assert.equal(state.nextId, 8);
+  // the restored blockedBy edge is intact and readable without throwing
+  assert.deepEqual(openBlockers(state.tasks[1]!, new Map(state.tasks.map((t) => [t.id, t]))), [1]);
 });

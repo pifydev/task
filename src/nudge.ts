@@ -25,6 +25,34 @@ export function shouldNudge(input: NudgeInput): boolean {
   return input.turnsSinceTaskTool >= NUDGE_AFTER_TURNS;
 }
 
+export interface TurnSignal {
+  /** The turn called a tool whose name starts with `prefix`. */
+  usedTaskTool: boolean;
+  /** The turn called any tool at all (text-only turns are the nudge trigger). */
+  anyToolCall: boolean;
+}
+
+/**
+ * Read tool calls out of an agent turn's messages. pi's toolCall content
+ * blocks carry `name` (pi-ai ToolCall); `toolName` is accepted too so the
+ * classification survives either shape.
+ */
+export function classifyTurn(messages: unknown[], prefix = "task_"): TurnSignal {
+  let usedTaskTool = false;
+  let anyToolCall = false;
+  for (const message of messages) {
+    const msg = message as { role?: string; content?: unknown } | null;
+    if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const block of msg.content as Array<{ type?: string; name?: unknown; toolName?: unknown }>) {
+      if (block?.type !== "toolCall") continue;
+      anyToolCall = true;
+      const name = typeof block.name === "string" ? block.name : typeof block.toolName === "string" ? block.toolName : "";
+      if (name.startsWith(prefix)) usedTaskTool = true;
+    }
+  }
+  return { usedTaskTool, anyToolCall };
+}
+
 export function buildNudge(state: TaskState): string {
   const index = new Map(state.tasks.map((t) => [t.id, t]));
   const open = state.tasks

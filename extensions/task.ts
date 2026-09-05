@@ -22,12 +22,13 @@ import { Type } from "typebox";
 import {
   TASK_STATE,
   createTask,
+  newlyReady,
   readyTasks,
   replayBranch,
   updateTask,
   type UpdatePatch,
 } from "../src/graph.ts";
-import { buildNudge, shouldNudge } from "../src/nudge.ts";
+import { buildNudge, classifyTurn, shouldNudge } from "../src/nudge.ts";
 import { buildWidgetLines } from "../src/widget.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "../src/types.ts";
 import { openBlockers } from "../src/graph.ts";
@@ -155,11 +156,21 @@ export default function taskExtension(pi: ExtensionAPI) {
 
       const result = updateTask(state, params.id, patch, Date.now());
       if (result.error) throw new Error(result.error);
+      const unblocked = newlyReady(state, result.state);
       commit(ctx as UiContext, result.state);
       const warn = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join(" ")}` : "";
+      const ready =
+        unblocked.length > 0
+          ? `\nNow ready (no open blockers, safe to parallelize): ${unblocked.map((t) => `#${t.id} ${t.subject}`).join(", ")}`
+          : "";
       return {
-        content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}` }],
-        details: { id: result.task!.id, status: result.task!.status, warnings: result.warnings },
+        content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${ready}` }],
+        details: {
+          id: result.task!.id,
+          status: result.task!.status,
+          warnings: result.warnings,
+          ready: unblocked.map((t) => t.id),
+        },
       };
     },
   });
@@ -194,18 +205,7 @@ export default function taskExtension(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event) => {
     const messages = (event as { messages?: unknown[] }).messages ?? [];
-    const usedTaskTool = messages.some((m) => {
-      const msg = m as { role?: string; content?: Array<{ type?: string; toolName?: string }> };
-      return (
-        msg.role === "assistant" &&
-        Array.isArray(msg.content) &&
-        msg.content.some((c) => c.type === "toolCall" && String(c.toolName ?? "").startsWith("task_"))
-      );
-    });
-    const anyToolCall = messages.some((m) => {
-      const msg = m as { role?: string; content?: Array<{ type?: string }> };
-      return msg.role === "assistant" && Array.isArray(msg.content) && msg.content.some((c) => c.type === "toolCall");
-    });
+    const { usedTaskTool, anyToolCall } = classifyTurn(messages);
     lastTurnTextOnly = !anyToolCall;
     turnsSinceTaskTool = usedTaskTool ? 0 : turnsSinceTaskTool + 1;
   });
