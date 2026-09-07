@@ -28,7 +28,7 @@ import {
   updateTask,
   type UpdatePatch,
 } from "../src/graph.ts";
-import { buildNudge, classifyTurn, shouldNudge } from "../src/nudge.ts";
+import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "../src/nudge.ts";
 import { buildWidgetLines } from "../src/widget.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "../src/types.ts";
 import { openBlockers } from "../src/graph.ts";
@@ -38,6 +38,8 @@ type UiContext = ExtensionContext;
 export default function taskExtension(pi: ExtensionAPI) {
   let state: TaskState = EMPTY_STATE;
   let turnsSinceTaskTool = 0;
+  /** Which completed list has already had its sweep, so it fires once. */
+  let sweptSignature: string | null = null;
   let lastTurnTextOnly = false;
   let lastUiCtx: UiContext | null = null;
 
@@ -191,12 +193,25 @@ export default function taskExtension(pi: ExtensionAPI) {
   // ── Nudges: transient context-hook injection (never persisted) ───────
 
   pi.on("context", async (event) => {
-    if (!shouldNudge({ state, turnsSinceTaskTool, lastTurnTextOnly })) return undefined;
+    // A finished list gets one sweep; an unfinished one gets the stale-list
+    // nudge. Both are transient — decided per request, never persisted.
+    const signature = completionSignature(state);
+    const sweep = signature !== null && signature !== sweptSignature;
+    if (sweep) sweptSignature = signature;
+    else if (signature === null) sweptSignature = null;
+
+    const text = sweep
+      ? buildCompletionSweep(state)
+      : shouldNudge({ state, turnsSinceTaskTool, lastTurnTextOnly })
+        ? buildNudge(state)
+        : null;
+    if (text === null) return undefined;
+
     const messages = [
       ...event.messages,
       {
         role: "user",
-        content: [{ type: "text", text: buildNudge(state) }],
+        content: [{ type: "text", text }],
         timestamp: Date.now(),
       } as never,
     ];

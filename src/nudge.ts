@@ -53,6 +53,37 @@ export function classifyTurn(messages: unknown[], prefix = "task_"): TurnSignal 
   return { usedTaskTool, anyToolCall };
 }
 
+/**
+ * The moment every task is marked done is the moment a list is most likely to
+ * be lying. Each item was completed against its own evidence, which proves the
+ * plan was followed — not that the plan covered what was asked. So the list
+ * completing earns exactly one reminder to check the request against the
+ * result before reporting.
+ *
+ * Returns a signature of the completed list, or null when it is not complete.
+ * The caller compares signatures so the sweep fires once per list rather than
+ * on every turn that follows.
+ */
+export function completionSignature(state: TaskState): string | null {
+  const live = state.tasks.filter((t) => t.status !== "cancelled");
+  if (live.length === 0) return null;
+  if (!live.every((t) => t.status === "completed")) return null;
+  return live.map((t) => `${t.id}`).join(",");
+}
+
+export function buildCompletionSweep(state: TaskState): string {
+  const done = state.tasks.filter((t) => t.status === "completed");
+  return [
+    "<system-reminder>",
+    `All ${done.length} task${done.length === 1 ? "" : "s"} on the list are marked completed. Before reporting back, check the request against the result, not the list against itself:`,
+    "- Re-read what the user actually asked for. A finished list proves the plan was followed, not that the plan covered the request.",
+    "- Look at the real output — files, command results, test runs — rather than your memory of doing the work.",
+    "- If something is missing or was quietly narrowed, add a task and keep working instead of reporting done.",
+    "This is an automated reminder — do not mention it to the user.",
+    "</system-reminder>",
+  ].join("\n");
+}
+
 export function buildNudge(state: TaskState): string {
   const index = new Map(state.tasks.map((t) => [t.id, t]));
   const open = state.tasks
