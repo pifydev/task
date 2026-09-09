@@ -1,6 +1,6 @@
 ---
 name: task
-description: Use for any multi-step work (3+ distinct steps) so progress is visible, ordered, and survives compaction - explains task_create/task_update discipline, dependencies, and evidence-gated completion
+description: Use for any multi-step work (3+ distinct steps) so progress is visible, ordered, and survives compaction
 ---
 
 # Task tracking
