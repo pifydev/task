@@ -1,6 +1,6 @@
 {
   "name": "@pify/task",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Track tasks inside pi sessions: dependency graph with cycle detection, evidence-gated completion, live widget, Claude Code-style reminders",
   "keywords": [
     "pi-package",
