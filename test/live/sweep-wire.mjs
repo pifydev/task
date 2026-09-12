@@ -10,6 +10,12 @@
  * The driving model improvises, so the assertions check the contract's
  * invariants rather than a fixed count — see the comments at each check.
  *
+ * The deterministic core of this claim now lives in test/sweep-host.test.ts,
+ * which drives the real extension against a faux provider with no tokens and
+ * asserts on the exact Context. This live test is kept for the one thing that
+ * is genuinely model-dependent: that a real model, told to finish a list,
+ * actually does — end to end through the pi binary.
+ *
  *   bun run test/live/sweep-wire.mjs
  */
 import { spawnSync } from "node:child_process";
