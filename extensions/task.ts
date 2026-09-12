@@ -28,7 +28,7 @@ import {
   updateTask,
   type UpdatePatch,
 } from "../src/graph.ts";
-import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge } from "../src/nudge.ts";
+import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge, sweepStep } from "../src/nudge.ts";
 import { buildWidgetLines } from "../src/widget.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "../src/types.ts";
 import { openBlockers } from "../src/graph.ts";
@@ -38,7 +38,7 @@ type UiContext = ExtensionContext;
 export default function taskExtension(pi: ExtensionAPI) {
   let state: TaskState = EMPTY_STATE;
   let turnsSinceTaskTool = 0;
-  /** Which completed list has already had its sweep, so it fires once. */
+  /** Which completed list already had its sweep — once per completion episode. */
   let sweptSignature: string | null = null;
   let lastTurnTextOnly = false;
   let lastUiCtx: UiContext | null = null;
@@ -193,12 +193,14 @@ export default function taskExtension(pi: ExtensionAPI) {
   // ── Nudges: transient context-hook injection (never persisted) ───────
 
   pi.on("context", async (event) => {
-    // A finished list gets one sweep; an unfinished one gets the stale-list
-    // nudge. Both are transient — decided per request, never persisted.
-    const signature = completionSignature(state);
-    const sweep = signature !== null && signature !== sweptSignature;
-    if (sweep) sweptSignature = signature;
-    else if (signature === null) sweptSignature = null;
+    // A finished list gets one sweep per completion episode; an unfinished
+    // one gets the stale-list nudge. Both are transient — decided per
+    // request, never persisted — so after /reload the episode memory starts
+    // over and a still-completed list is swept once more. That is the price
+    // of never writing nudges into the session, and it is the right trade.
+    const step = sweepStep(completionSignature(state), sweptSignature);
+    sweptSignature = step.swept;
+    const sweep = step.fire;
 
     const text = sweep
       ? buildCompletionSweep(state)

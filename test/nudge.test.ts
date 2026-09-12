@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildCompletionSweep, completionSignature } from "../src/nudge.ts";
+import { buildCompletionSweep, completionSignature, sweepStep } from "../src/nudge.ts";
 import type { Task, TaskState, TaskStatus } from "../src/types.ts";
 
 function task(id: number, status: TaskStatus): Task {
@@ -39,6 +39,55 @@ test("a finished list earns one sweep, and only one", () => {
 
   // Adding work reopens the list; finishing it again is a new completion.
   assert.notEqual(completionSignature(state(done(1), done(2), done(3))), signature);
+});
+
+/**
+ * Drive sweepStep the way the context hook does: one call per request, memory
+ * threaded through. Returns which requests fired.
+ */
+function episode(signatures: Array<string | null>): boolean[] {
+  let swept: string | null = null;
+  return signatures.map((signature) => {
+    const step = sweepStep(signature, swept);
+    swept = step.swept;
+    return step.fire;
+  });
+}
+
+test("the sweep fires once per completion episode, not once per turn", () => {
+  // Open, open, complete, then three quiet turns on the same finished list.
+  assert.deepEqual(
+    episode([null, null, "1,2", "1,2", "1,2", "1,2"]),
+    [false, false, true, false, false, false],
+  );
+});
+
+test("reopening the list arms the sweep again — that is the documented contract", () => {
+  // Complete → reopened (something was missing) → completed again with the
+  // SAME ids. The about-to-report moment happened twice; so does the sweep.
+  // This looks like a duplicate-fire bug to a reader who has not seen the
+  // README line; it is the intended behavior, which is why it is pinned here.
+  assert.deepEqual(episode(["1", null, "1"]), [true, false, true]);
+});
+
+test("adding then cancelling a task is a reopen like any other", () => {
+  // "1" completes → task 2 added (list open) → task 2 cancelled (list is
+  // "1" again, complete). The list reopened and closed; the sweep re-arms.
+  assert.deepEqual(episode(["1", null, "1"]), [true, false, true]);
+  // But adding and finishing the task is a NEW list, and fires as one.
+  assert.deepEqual(episode(["1", null, "1,2"]), [true, false, true]);
+});
+
+test("a changed completed list fires without passing through open", () => {
+  // Cancelling a task from an already-swept completed list shrinks the
+  // signature while staying complete: "1,2" → "1". A different list, one sweep.
+  assert.deepEqual(episode(["1,2", "1"]), [true, true]);
+});
+
+test("an incomplete list never fires and always clears the memory", () => {
+  assert.deepEqual(episode([null, null, null]), [false, false, false]);
+  assert.equal(sweepStep(null, "1,2").swept, null);
+  assert.equal(sweepStep(null, null).swept, null);
 });
 
 test("the sweep checks the request against the result, not the list against itself", () => {

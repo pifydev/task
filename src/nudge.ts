@@ -71,6 +71,33 @@ export function completionSignature(state: TaskState): string | null {
   return live.map((t) => `${t.id}`).join(",");
 }
 
+/**
+ * The fire-once bookkeeping for the sweep, as data in and data out.
+ *
+ * The contract (also stated in the README): the sweep fires once per
+ * completed list, and reopening the list arms it again. "Once" is per
+ * completion episode, not per session — a list that completes, reopens
+ * because something was missing, and completes again has reached the
+ * about-to-report moment twice, and the reminder is worth its tokens both
+ * times.
+ *
+ * This lived inline in the extension closure, which is why a flaky live test
+ * could make it look broken: the behavior had no unit test because there was
+ * no unit to test.
+ */
+export function sweepStep(
+  signature: string | null,
+  swept: string | null,
+): { fire: boolean; swept: string | null } {
+  // List not complete: nothing to say, and the memory is cleared so the next
+  // completion — even of the same ids — earns its reminder.
+  if (signature === null) return { fire: false, swept: null };
+  // Complete and unchanged since the last sweep: stay quiet. Firing here is
+  // the failure mode the live test guards: a reminder on every turn.
+  if (signature === swept) return { fire: false, swept };
+  return { fire: true, swept: signature };
+}
+
 export function buildCompletionSweep(state: TaskState): string {
   const done = state.tasks.filter((t) => t.status === "completed");
   return [
