@@ -91,6 +91,7 @@ export default function taskExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "task_create",
     label: "Create task",
+    promptSnippet: "Track a task, with dependencies on other tasks",
     description:
       "Add a task to the session task list. Use for multi-step work so progress is visible and " +
       "survives compaction. blockedBy lists ids of tasks that must complete first (cycles and " +
@@ -128,6 +129,7 @@ export default function taskExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "task_update",
     label: "Update task",
+    promptSnippet: "Change a task's state; completing one requires stating the evidence",
     description:
       "Update a task. Set status=in_progress when starting (blocked tasks refuse), status=completed " +
       "when done — completion REQUIRES evidence: what you verified (command output, test results, " +
@@ -180,6 +182,7 @@ export default function taskExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "task_list",
     label: "List tasks",
+    promptSnippet: "The task list, with what is ready to start",
     description:
       "The current task list with statuses, open blockers, and which tasks are ready to start " +
       "(no open blockers) — ready tasks are safe to parallelize.",
