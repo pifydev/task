@@ -1,6 +1,6 @@
 # @pify/task
 
-[![npm version](https://img.shields.io/npm/v/@pify/task)](https://www.npmjs.com/package/@pify/task) [![npm downloads](https://img.shields.io/npm/dm/@pify/task)](https://www.npmjs.com/package/@pify/task)
+[![CI](https://github.com/pifydev/task/actions/workflows/ci.yml/badge.svg)](https://github.com/pifydev/task/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/@pify/task)](https://www.npmjs.com/package/@pify/task) [![npm downloads](https://img.shields.io/npm/dm/@pify/task)](https://www.npmjs.com/package/@pify/task)
 
 Task tracking inside [pi](https://github.com/earendil-works/pi) sessions — a dependency-aware list with a live widget, transient reminders, and completion that demands evidence.
 
