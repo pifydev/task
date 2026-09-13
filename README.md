@@ -1,5 +1,7 @@
 # @pify/task
 
+[![npm version](https://img.shields.io/npm/v/@pify/task)](https://www.npmjs.com/package/@pify/task) [![npm downloads](https://img.shields.io/npm/dm/@pify/task)](https://www.npmjs.com/package/@pify/task)
+
 Task tracking inside [pi](https://github.com/earendil-works/pi) sessions — a dependency-aware list with a live widget, transient reminders, and completion that demands evidence.
 
 Part of the [Pify suite](https://github.com/pifydev). Install with [`pify install task`](https://github.com/pifydev/cli) or `pi install npm:@pify/task`.
