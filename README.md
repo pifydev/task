@@ -27,7 +27,7 @@ A checklist an agent can tick without proving anything is a checklist that measu
 | `id` | number | The task to change |
 | `status` | `pending` \| `in_progress` \| `completed` \| `cancelled`, optional | Blocked tasks refuse `in_progress` and `completed` |
 | `subject` / `description` | string, optional | Rewrite either |
-| `blockedBy` | number[], optional | Replaces the dependency set |
+| `blockedBy` | number[], optional | Replaces the full blocker set — include existing ids to keep them; the result echoes the resulting blockers |
 | `evidence` | string, optional | **Required** to reach `completed` |
 
 ### `task_list`
@@ -37,9 +37,9 @@ No parameters. Returns the whole list plus the **ready set** — tasks with no o
 ## Behaviour
 
 - **A dependency graph, maintained for you.** `blockedBy` and `blocks` are kept in sync in both directions. Self-dependencies, ids that do not exist, and cycles are dropped with a warning rather than accepted and left to deadlock later.
-- **Evidence-gated completion.** Marking a task done requires stating what was actually checked — command output, test results, file state. *"I wrote the code"* does not pass. This is the same bar `goal_complete` holds elsewhere in the suite.
+- **Evidence-gated completion.** Marking a task done requires stating what was actually checked — command output, test results, file state. *"I wrote the code"* does not pass. This is the same bar `goal_complete` holds elsewhere in the suite. Reopening a completed task clears its evidence, so re-completing it demands fresh evidence in that same update — an item cannot re-close on a previous attempt's now-stale proof.
 - **Unblocked work is reported where it lands.** Completing a task answers with what it just made ready — `Now ready (no open blockers, safe to parallelize): #2 write tests, #5 update docs` — instead of leaving the agent to discover it through a separate `task_list` call it may never make.
-- **Reminders when the list goes stale.** If open tasks are untouched for a few turns, or an `in_progress` task survives a turn that produced only text, a `<system-reminder>` is added to the next request listing the open items and their blockers.
+- **Reminders when the list goes stale.** If open tasks are untouched for a few turns, or an `in_progress` task survives a turn that produced only text, a `<system-reminder>` listing the open items and their blockers is added to the outgoing request — at most once per turn, not on every call inside a tool loop, and never on a turn pi aborted or is about to retry.
 - **A sweep when the list finishes.** The moment every task is marked completed is the moment a list is most likely to be lying: each item passed its own evidence check, which proves the plan was followed, not that the plan covered the request. A completing list therefore earns exactly one reminder to re-read what was asked, look at the real output rather than the memory of producing it, and add a task instead of reporting done if something was quietly narrowed. It fires once per completed list, and reopening the list arms it again.
 - **Both injections are transient.** They are added to the outgoing request through the context hook and never written to the session, so they cannot accumulate and cannot break an earlier prompt-cache prefix.
 - **Live widget.** `☑ tasks 2/5`, with `✳` in progress, `◻` pending, `⊘ blocked by #2`, `✔` done.

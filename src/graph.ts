@@ -161,13 +161,27 @@ export function updateTask(state: TaskState, id: number, patch: UpdatePatch, now
         error: `#${id} is blocked by ${open.map((b) => `#${b}`).join(", ")} — resolve blockers first`,
       };
     }
-    if (patch.status === "completed" && !next.evidence) {
+    // Evidence must accompany the completion itself, not be inherited from a
+    // previous one. A task reopened after a failed completion keeps its old
+    // evidence field until cleared below, so gating on `next.evidence` would
+    // let it re-close on stale, now-wrong evidence — check the patch instead.
+    if (patch.status === "completed" && !patch.evidence?.trim()) {
       return {
         state,
         task: existing,
         warnings,
         error: `completing #${id} requires evidence (what was verified: command output, file state, test results)`,
       };
+    }
+    // Leaving completed invalidates the recorded evidence unless this same
+    // patch supplies fresh evidence, so task_list and the widget stop showing
+    // "evidence recorded" for a task that is being reopened.
+    if (
+      existing.status === "completed" &&
+      (patch.status === "pending" || patch.status === "in_progress") &&
+      patch.evidence === undefined
+    ) {
+      next.evidence = null;
     }
     next.status = patch.status;
   }

@@ -139,26 +139,81 @@ test("v0.2 classifyTurn reads pi's toolCall name field", () => {
   assert.deepEqual(classifyTurn(turn([{ type: "toolCall", name: "task_update" }])), {
     usedTaskTool: true,
     anyToolCall: true,
+    retryOrAbort: false,
   });
   // the legacy shape still classifies
   assert.deepEqual(classifyTurn(turn([{ type: "toolCall", toolName: "task_list" }])), {
     usedTaskTool: true,
     anyToolCall: true,
+    retryOrAbort: false,
   });
   assert.deepEqual(classifyTurn(turn([{ type: "toolCall", name: "bash" }])), {
     usedTaskTool: false,
     anyToolCall: true,
+    retryOrAbort: false,
   });
   assert.deepEqual(classifyTurn(turn([{ type: "text", text: "hi" }])), {
     usedTaskTool: false,
     anyToolCall: false,
+    retryOrAbort: false,
   });
   // user messages and junk never count
   assert.deepEqual(classifyTurn([{ role: "user", content: [{ type: "toolCall", name: "task_create" }] }, null]), {
     usedTaskTool: false,
     anyToolCall: false,
+    retryOrAbort: false,
   });
-  assert.deepEqual(classifyTurn([]), { usedTaskTool: false, anyToolCall: false });
+  assert.deepEqual(classifyTurn([]), { usedTaskTool: false, anyToolCall: false, retryOrAbort: false });
+});
+
+test("f101 classifyTurn flags a run that ended in a provider error or a user abort", () => {
+  // A retried/aborted run's last assistant message carries stopReason
+  // error/aborted, sometimes with empty content — it must still be flagged so
+  // agent_end can skip counting it as a text-only turn.
+  assert.equal(classifyTurn([{ role: "assistant", content: [], stopReason: "error" }]).retryOrAbort, true);
+  assert.equal(classifyTurn([{ role: "assistant", content: [], stopReason: "aborted" }]).retryOrAbort, true);
+  assert.equal(classifyTurn([{ role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" }]).retryOrAbort, false);
+  // The LAST assistant message decides: a good turn followed by an errored
+  // retry attempt flags, and the reverse does not.
+  assert.equal(
+    classifyTurn([
+      { role: "assistant", content: [{ type: "toolCall", name: "bash" }], stopReason: "toolUse" },
+      { role: "assistant", content: [], stopReason: "error" },
+    ]).retryOrAbort,
+    true,
+  );
+  // A missing stopReason (older/hand-built messages) is never a retry/abort.
+  assert.equal(classifyTurn([{ role: "assistant", content: [{ type: "text", text: "hi" }] }]).retryOrAbort, false);
+});
+
+test("f100 evidence gate holds on re-completion: reopening clears evidence", () => {
+  let s = seed();
+  // First completion carries evidence.
+  s = updateTask(s, 3, { status: "completed", evidence: "bun test: 42 pass" }, 1).state;
+  assert.equal(s.tasks.find((t) => t.id === 3)!.evidence, "bun test: 42 pass");
+
+  // Reopening drops the now-stale evidence so nothing re-closes on it.
+  s = updateTask(s, 3, { status: "in_progress" }, 2).state;
+  assert.equal(s.tasks.find((t) => t.id === 3)!.evidence, null);
+
+  // Re-completing without fresh evidence is refused, even though the task once
+  // had evidence recorded.
+  const fail = updateTask(s, 3, { status: "completed" }, 3);
+  assert.ok(fail.error?.includes("requires evidence"));
+
+  // Fresh evidence in the same patch re-closes it.
+  const ok = updateTask(s, 3, { status: "completed", evidence: "bun test: 43 pass" }, 4);
+  assert.equal(ok.error, null);
+  assert.equal(ok.task!.evidence, "bun test: 43 pass");
+});
+
+test("f100 reopening with new evidence in the same patch keeps it", () => {
+  let s = seed();
+  s = updateTask(s, 3, { status: "completed", evidence: "first run" }, 1).state;
+  // Reopen AND supply evidence in one patch: the supplied evidence survives.
+  const reopened = updateTask(s, 3, { status: "in_progress", evidence: "reopened: found a gap" }, 2);
+  assert.equal(reopened.task!.status, "in_progress");
+  assert.equal(reopened.task!.evidence, "reopened: found a gap");
 });
 
 test("v0.2 newlyReady reports what a completion unblocked", () => {

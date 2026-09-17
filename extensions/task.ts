@@ -28,7 +28,7 @@ import {
   updateTask,
   type UpdatePatch,
 } from "../src/graph.ts";
-import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, shouldNudge, sweepStep } from "../src/nudge.ts";
+import { buildCompletionSweep, buildNudge, classifyTurn, completionSignature, nudgeStep, shouldNudge, sweepStep } from "../src/nudge.ts";
 import { buildWidgetLines } from "../src/widget.ts";
 import { EMPTY_STATE, type TaskState, type TaskStatus } from "../src/types.ts";
 import { openBlockers } from "../src/graph.ts";
@@ -40,6 +40,15 @@ export default function taskExtension(pi: ExtensionAPI) {
   let turnsSinceTaskTool = 0;
   /** Which completed list already had its sweep — once per completion episode. */
   let sweptSignature: string | null = null;
+  /**
+   * The sweep chosen this turn, held until the turn actually completes.
+   * `undefined` means "not computed this turn". It is committed to
+   * sweptSignature in agent_end only when the turn was not aborted/retried, so
+   * an Esc or a 529-retry does not swallow the one-time completion reminder.
+   */
+  let pendingSweep: string | null | undefined = undefined;
+  /** The stale-list nudge already rode a request this turn — fire it once only. */
+  let nudgedThisTurn = false;
   let lastTurnTextOnly = false;
   let lastUiCtx: UiContext | null = null;
 
@@ -140,7 +149,11 @@ export default function taskExtension(pi: ExtensionAPI) {
       status: Type.Optional(StringEnum(["pending", "in_progress", "completed", "cancelled"] as const)),
       subject: Type.Optional(Type.String()),
       description: Type.Optional(Type.String()),
-      blockedBy: Type.Optional(Type.Array(Type.Number())),
+      blockedBy: Type.Optional(
+        Type.Array(Type.Number(), {
+          description: "Replaces the full blocker set; include existing ids to keep them",
+        }),
+      ),
       evidence: Type.Optional(Type.String({ description: "Required when completing" })),
     }),
     async execute(
@@ -167,8 +180,17 @@ export default function taskExtension(pi: ExtensionAPI) {
         unblocked.length > 0
           ? `\nNow ready (no open blockers, safe to parallelize): ${unblocked.map((t) => `#${t.id} ${t.subject}`).join(", ")}`
           : "";
+      // blockedBy replaces the whole set, so echo the resulting blockers when it
+      // was in the patch — a model that meant to add one silently loses the rest
+      // otherwise (f105).
+      const blockers =
+        params.blockedBy !== undefined
+          ? result.task!.blockedBy.length > 0
+            ? `\nBlocked by ${result.task!.blockedBy.map((b) => `#${b}`).join(", ")}`
+            : "\nNo blockers"
+          : "";
       return {
-        content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${warn}${ready}` }],
+        content: [{ type: "text", text: `#${result.task!.id} → ${result.task!.status}${blockers}${warn}${ready}` }],
         details: {
           id: result.task!.id,
           status: result.task!.status,
@@ -201,15 +223,21 @@ export default function taskExtension(pi: ExtensionAPI) {
     // request, never persisted — so after /reload the episode memory starts
     // over and a still-completed list is swept once more. That is the price
     // of never writing nudges into the session, and it is the right trade.
-    const step = sweepStep(completionSignature(state), sweptSignature);
-    sweptSignature = step.swept;
+    // The sweep memory is the turn-local pendingSweep once computed, falling
+    // back to the durable sweptSignature at the turn's first call. Committing to
+    // sweptSignature is deferred to agent_end (f104), so within a turn's tool
+    // loop the sweep still fires only once.
+    const already = pendingSweep === undefined ? sweptSignature : pendingSweep;
+    const step = sweepStep(completionSignature(state), already);
+    pendingSweep = step.swept;
     const sweep = step.fire;
 
-    const text = sweep
-      ? buildCompletionSweep(state)
-      : shouldNudge({ state, turnsSinceTaskTool, lastTurnTextOnly })
-        ? buildNudge(state)
-        : null;
+    // The stale-list nudge is gated to one request per turn (f099): nudgedThisTurn
+    // resets at the turn boundary (agent_start), so it re-arms next turn.
+    const nStep = nudgeStep(shouldNudge({ state, turnsSinceTaskTool, lastTurnTextOnly }), nudgedThisTurn);
+    nudgedThisTurn = nStep.nudged;
+
+    const text = sweep ? buildCompletionSweep(state) : nStep.fire ? buildNudge(state) : null;
     if (text === null) return undefined;
 
     const messages = [
@@ -223,11 +251,28 @@ export default function taskExtension(pi: ExtensionAPI) {
     return { messages };
   });
 
+  pi.on("agent_start", async () => {
+    // Turn boundary: re-arm the once-per-turn nudge and drop the turn-local
+    // sweep memory so the next turn recomputes from the committed signature.
+    // On a retried/aborted turn pi emits a fresh agent_start, which is exactly
+    // when the sweep must be allowed to ride again.
+    nudgedThisTurn = false;
+    pendingSweep = undefined;
+  });
+
   pi.on("agent_end", async (event) => {
     const messages = (event as { messages?: unknown[] }).messages ?? [];
-    const { usedTaskTool, anyToolCall } = classifyTurn(messages);
+    const { usedTaskTool, anyToolCall, retryOrAbort } = classifyTurn(messages);
+    // A provider error (pi will retry) or a user abort is not a real turn: it
+    // would otherwise count as a text-only turn and arm the nudge spuriously,
+    // and it must not commit the sweep the retry still needs to send (f101/f104).
+    if (retryOrAbort) return;
     lastTurnTextOnly = !anyToolCall;
     turnsSinceTaskTool = usedTaskTool ? 0 : turnsSinceTaskTool + 1;
+    // The turn completed: commit the sweep it chose so the same list is not
+    // swept again next turn.
+    if (pendingSweep !== undefined) sweptSignature = pendingSweep;
+    pendingSweep = undefined;
   });
 
   // ── Lifecycle & command ──────────────────────────────────────────────
@@ -236,6 +281,13 @@ export default function taskExtension(pi: ExtensionAPI) {
     state = replayBranch(ctx.sessionManager.getBranch() as never);
     turnsSinceTaskTool = 0;
     lastTurnTextOnly = false;
+    // The sweep signature is only the id list ("1", "1,2"), which resumed
+    // sessions routinely share since ids start at 1; without this reset a
+    // completed list carried into a new session could match an already-swept
+    // signature and never fire (f103).
+    sweptSignature = null;
+    pendingSweep = undefined;
+    nudgedThisTurn = false;
     renderWidget(ctx);
   });
 

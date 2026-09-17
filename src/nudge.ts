@@ -30,6 +30,13 @@ export interface TurnSignal {
   usedTaskTool: boolean;
   /** The turn called any tool at all (text-only turns are the nudge trigger). */
   anyToolCall: boolean;
+  /**
+   * The run ended in a provider error or a user abort (last assistant message's
+   * stopReason). pi emits agent_end for these too — and is about to retry the
+   * error or has dropped the aborted turn — so they are not real turns and must
+   * not move the nudge counters.
+   */
+  retryOrAbort: boolean;
 }
 
 /**
@@ -40,9 +47,15 @@ export interface TurnSignal {
 export function classifyTurn(messages: unknown[], prefix = "task_"): TurnSignal {
   let usedTaskTool = false;
   let anyToolCall = false;
+  let lastAssistantStop: string | undefined;
   for (const message of messages) {
-    const msg = message as { role?: string; content?: unknown } | null;
-    if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    const msg = message as { role?: string; content?: unknown; stopReason?: unknown } | null;
+    if (!msg || msg.role !== "assistant") continue;
+    // Track separately from the content scan: an errored/aborted assistant
+    // message can carry an empty content array, so its stopReason must be read
+    // even when there are no toolCall blocks to inspect.
+    if (typeof msg.stopReason === "string") lastAssistantStop = msg.stopReason;
+    if (!Array.isArray(msg.content)) continue;
     for (const block of msg.content as Array<{ type?: string; name?: unknown; toolName?: unknown }>) {
       if (block?.type !== "toolCall") continue;
       anyToolCall = true;
@@ -50,7 +63,7 @@ export function classifyTurn(messages: unknown[], prefix = "task_"): TurnSignal 
       if (name.startsWith(prefix)) usedTaskTool = true;
     }
   }
-  return { usedTaskTool, anyToolCall };
+  return { usedTaskTool, anyToolCall, retryOrAbort: lastAssistantStop === "error" || lastAssistantStop === "aborted" };
 }
 
 /**
@@ -96,6 +109,22 @@ export function sweepStep(
   // the failure mode the live test guards: a reminder on every turn.
   if (signature === swept) return { fire: false, swept };
   return { fire: true, swept: signature };
+}
+
+/**
+ * The fire-once-per-turn bookkeeping for the stale-list nudge, mirroring
+ * sweepStep: data in, data out.
+ *
+ * The context hook runs before every provider call, including every iteration
+ * of a long tool loop. Left ungated, an armed nudge would ride every one of
+ * those calls, pressuring the model to touch a task tool just to silence it —
+ * exactly how weak "evidence" gets written mid-work. This gate lets the nudge
+ * ride at most one request per agent turn; the caller resets `nudged` at the
+ * turn boundary (agent_start) so the next turn can nudge again.
+ */
+export function nudgeStep(want: boolean, nudged: boolean): { fire: boolean; nudged: boolean } {
+  const fire = want && !nudged;
+  return { fire, nudged: nudged || fire };
 }
 
 export function buildCompletionSweep(state: TaskState): string {

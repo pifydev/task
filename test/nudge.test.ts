@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildCompletionSweep, completionSignature, sweepStep } from "../src/nudge.ts";
+import { buildCompletionSweep, completionSignature, nudgeStep, sweepStep } from "../src/nudge.ts";
 import type { Task, TaskState, TaskStatus } from "../src/types.ts";
 
 function task(id: number, status: TaskStatus): Task {
@@ -88,6 +88,33 @@ test("an incomplete list never fires and always clears the memory", () => {
   assert.deepEqual(episode([null, null, null]), [false, false, false]);
   assert.equal(sweepStep(null, "1,2").swept, null);
   assert.equal(sweepStep(null, null).swept, null);
+});
+
+/**
+ * Drive nudgeStep the way the context hook does within a single turn: `want`
+ * is shouldNudge's answer on each provider call, `nudged` threaded through, and
+ * the flag reset (to false) only at the turn boundary.
+ */
+function turn(wants: boolean[], startNudged = false): boolean[] {
+  let nudged = startNudged;
+  return wants.map((want) => {
+    const step = nudgeStep(want, nudged);
+    nudged = step.nudged;
+    return step.fire;
+  });
+}
+
+test("f099 the nudge fires once per turn, not on every call in a tool loop", () => {
+  // Armed across a five-call tool loop: exactly the first call carries it.
+  assert.deepEqual(turn([true, true, true, true, true]), [true, false, false, false, false]);
+  // Not armed until part-way through the turn (counters unchanged mid-turn in
+  // practice, but the gate must still fire only once from the first true).
+  assert.deepEqual(turn([false, false, true, true]), [false, false, true, false]);
+  // A turn that never wants the nudge never fires it.
+  assert.deepEqual(turn([false, false, false]), [false, false, false]);
+  // Resetting at the turn boundary re-arms it: the next turn fires once more.
+  assert.deepEqual(turn([true, true]), [true, false]);
+  assert.deepEqual(turn([true], /* startNudged */ true), [false]);
 });
 
 test("the sweep checks the request against the result, not the list against itself", () => {
