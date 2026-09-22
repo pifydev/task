@@ -25,6 +25,7 @@
  * [[pi-child-session-gotchas]] for why loader.reload() is not optional.
  */
 import {
+  getCurrentTools,
   fauxProvider,
   fauxAssistantMessage,
   fauxToolCall,
@@ -134,7 +135,13 @@ export async function createHost(
       return JSON.stringify(contexts[index]?.messages ?? []);
     },
     toolNames(index: number) {
-      return (contexts[index]?.tools ?? []).map((t) => (t as { name: string }).name);
+      // Since pi 0.86 a provider receives a TranscriptContext: the tool
+      // declarations ride inside the messages (the leading system message and
+      // later tool patches), and `context.tools` is no longer populated. Read
+      // them the way a provider must, so this asserts what the model saw.
+      const ctx = contexts[index];
+      if (!ctx) return [];
+      return getCurrentTools(ctx.messages as never).map((t) => t.name);
     },
     dispose() {
       try {
